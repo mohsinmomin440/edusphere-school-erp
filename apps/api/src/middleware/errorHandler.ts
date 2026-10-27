@@ -26,6 +26,7 @@ export const errorHandler = (
     return res.status(409).json({ error: 'A record with this identifier already exists in this school.' });
   }
 
-  console.error(err);
-  return res.status(500).json({ error: err.message || 'Internal Server Error' });
+  // Log internal details server-side; return a safe generic message to the client
+  console.error('Internal server error:', err);
+  return res.status(500).json({ error: 'Internal Server Error' });
 };

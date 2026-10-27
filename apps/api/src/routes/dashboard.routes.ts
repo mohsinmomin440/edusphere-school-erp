@@ -70,7 +70,7 @@ const DEFAULT_DEMO_SUMMARY = {
 router.get(
   '/summary',
   authenticate,
-  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer', 'Teacher'),
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer'),
   asyncHandler(async (req: Request, res: Response) => {
     const schoolId = req.user?.schoolId || 'school-default';
 

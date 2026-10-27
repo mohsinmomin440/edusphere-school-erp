@@ -24,7 +24,7 @@ const guardianUpdateSchema = guardianInputSchema.partial();
 
 router.get(
   '/',
-  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer', 'Parent', 'Teacher'),
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer', 'Parent'),
   asyncHandler(async (req: Request, res: Response) => {
     const user = req.user!;
     const schoolId = user.schoolId || 'school-default';
@@ -35,7 +35,10 @@ router.get(
     if (isDBConnected()) {
       const filter: Record<string, any> = { schoolId };
 
-      // SEC-3: If user is Parent, only show their own guardian record
+      // SEC-3: If user is Parent, only show their own guardian record.
+      // The email equality filter is applied FIRST and cannot be bypassed by
+      // search, relationship, status, or any other query parameter because all
+      // subsequent conditions are ANDed against this base filter.
       if (user.role === 'Parent') {
         if (user.email) {
           filter.email = user.email.toLowerCase();
@@ -43,10 +46,6 @@ router.get(
           // No email -> no results
           filter._id = null;
         }
-      }
-      // SEC-3: Student role should be rejected (handled by requireRole above, but defense in depth)
-      if (user.role === 'Student') {
-        return res.status(403).json({ error: 'Forbidden: Students cannot access guardian directory.' });
       }
 
       if (status && status !== 'All') {
@@ -150,13 +149,14 @@ router.get(
 
     let demoGuardians = Array.from(guardianMap.values());
 
-    // SEC-3: In disconnected mode, if Parent, filter to only their email
+    // SEC-3: In disconnected mode, if Parent, filter to only their email.
+    // Applied AFTER map construction but BEFORE any user-controlled query filters,
+    // so search/relationship/status cannot bypass the email restriction.
     if (user.role === 'Parent' && user.email) {
       demoGuardians = demoGuardians.filter((g) => g.email.toLowerCase() === user.email!.toLowerCase());
     } else if (user.role === 'Parent') {
       demoGuardians = [];
     }
-    // SEC-3: Student role already blocked by requireRole
 
     if (relationship && relationship !== 'All') {
       demoGuardians = demoGuardians.filter((g) => g.relationship === relationship);
@@ -186,10 +186,18 @@ router.get(
 
 router.get(
   '/:id',
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer', 'Parent'),
   asyncHandler(async (req: Request, res: Response) => {
     const user = req.user!;
     const schoolId = user.schoolId || 'school-default';
     const { id } = req.params;
+
+    // SEC-4: Explicit role authorization for guardian profile access.
+    // Only administrative roles may view arbitrary guardian profiles.
+    // Parents may only view their own record (verified below by email match).
+    // Students and other unauthorized roles are rejected by requireRole above.
+    const ADMIN_ROLES = ['Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer'];
+    const isAdmin = ADMIN_ROLES.includes(user.role);
 
     if (isDBConnected()) {
       const guardian = await Guardian.findOne({ _id: id, schoolId }).lean();
@@ -198,9 +206,14 @@ router.get(
       }
 
       // SEC-4: BOLA prevention - If Parent, verify email matches
-      if (user.role === 'Parent') {
-        if (!user.email || guardian.email.toLowerCase() !== user.email.toLowerCase()) {
-          return res.status(403).json({ error: 'Forbidden: You can only view your own guardian record.' });
+      if (!isAdmin) {
+        if (user.role === 'Parent') {
+          if (!user.email || guardian.email.toLowerCase() !== user.email.toLowerCase()) {
+            return res.status(403).json({ error: 'Forbidden: You can only view your own guardian record.' });
+          }
+        } else {
+          // Any non-admin, non-parent role (e.g. Teacher, Student) is denied
+          return res.status(403).json({ error: 'Forbidden: You are not authorized to view guardian profiles.' });
         }
       }
 
@@ -280,9 +293,14 @@ router.get(
     }
 
     // SEC-4: BOLA prevention - If Parent, verify email matches
-    if (user.role === 'Parent') {
-      if (!user.email || demoGuardian.email.toLowerCase() !== user.email.toLowerCase()) {
-        return res.status(403).json({ error: 'Forbidden: You can only view your own guardian record.' });
+    if (!isAdmin) {
+      if (user.role === 'Parent') {
+        if (!user.email || demoGuardian.email.toLowerCase() !== user.email.toLowerCase()) {
+          return res.status(403).json({ error: 'Forbidden: You can only view your own guardian record.' });
+        }
+      } else {
+        // Any non-admin, non-parent role (e.g. Teacher, Student) is denied
+        return res.status(403).json({ error: 'Forbidden: You are not authorized to view guardian profiles.' });
       }
     }
 
