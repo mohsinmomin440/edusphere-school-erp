@@ -4,6 +4,9 @@ import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import Dashboard from '@/features/dashboard/Dashboard';
 import { StudentManagement } from '@/features/students/StudentManagement';
+import { GuardianManagement } from '@/features/guardians/GuardianManagement';
+import { StaffManagement } from '@/features/staff/StaffManagement';
+import { ClassManagement } from '@/features/academics/ClassManagement';
 
 interface AppShellProps {
   children?: React.ReactNode;
@@ -17,6 +20,12 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     switch (currentTab) {
       case 'students':
         return <StudentManagement />;
+      case 'parents':
+        return <GuardianManagement />;
+      case 'teachers':
+        return <StaffManagement />;
+      case 'classes':
+        return <ClassManagement />;
       case 'dashboard':
         return <Dashboard />;
       default:

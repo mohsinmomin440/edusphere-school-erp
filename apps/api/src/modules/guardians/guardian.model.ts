@@ -8,6 +8,7 @@ export interface IGuardian extends Document {
   email: string;
   occupation?: string;
   address?: string;
+  status: 'Active' | 'Archived';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -21,11 +22,18 @@ const GuardianSchema = new Schema<IGuardian>(
     email: { type: String, required: true, trim: true, lowercase: true },
     occupation: { type: String, default: '' },
     address: { type: String, default: '' },
+    status: {
+      type: String,
+      enum: ['Active', 'Archived'],
+      default: 'Active',
+      index: true,
+    },
   },
   { timestamps: true }
 );
 
 GuardianSchema.index({ schoolId: 1, email: 1 });
 GuardianSchema.index({ schoolId: 1, phone: 1 });
+GuardianSchema.index({ schoolId: 1, status: 1 });
 
 export const Guardian = mongoose.model<IGuardian>('Guardian', GuardianSchema);

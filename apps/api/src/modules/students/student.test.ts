@@ -155,10 +155,9 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
         email: 'other.parent@example.com',
         name: 'Other Parent',
         role: 'Parent',
-        linkedStudentIds: ['demo-student-1'], // Linked only to student-1
+        linkedStudentIds: ['demo-student-1'],
       });
 
-      // Attempt to access student-2
       const res = await request(app)
         .get('/api/v1/students/demo-student-2')
         .set('Cookie', parentCookie);
@@ -176,7 +175,6 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
         studentProfileId: 'demo-student-3',
       });
 
-      // Attempt to access student-1
       const res = await request(app)
         .get('/api/v1/students/demo-student-1')
         .set('Cookie', studentCookie);
@@ -257,6 +255,25 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
       expect(res.body.error).toContain('Database unavailable');
     });
 
+    it('returns 503 when attempting to update a guardian while disconnected', async () => {
+      const res = await request(app)
+        .patch('/api/v1/guardians/demo-guardian-1')
+        .set('Cookie', adminCookie)
+        .send({ occupation: 'Senior Architect' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to archive a guardian while disconnected', async () => {
+      const res = await request(app)
+        .delete('/api/v1/guardians/demo-guardian-1')
+        .set('Cookie', adminCookie);
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
     it('returns 503 when attempting to create a staff member while disconnected', async () => {
       const res = await request(app)
         .post('/api/v1/staff')
@@ -268,6 +285,25 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
           email: 'teacher.test@edusphere.com',
           phone: '+91 98765 99998',
         });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to update a staff member while disconnected', async () => {
+      const res = await request(app)
+        .patch('/api/v1/staff/staff-1')
+        .set('Cookie', adminCookie)
+        .send({ qualification: 'Ph.D Mathematics, M.Ed' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to deactivate a staff member while disconnected', async () => {
+      const res = await request(app)
+        .delete('/api/v1/staff/staff-1')
+        .set('Cookie', adminCookie);
 
       expect(res.status).toBe(503);
       expect(res.body.error).toContain('Database unavailable');
@@ -287,10 +323,74 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
       expect(res.status).toBe(503);
       expect(res.body.error).toContain('Database unavailable');
     });
+
+    it('returns 503 when attempting to update a class while disconnected', async () => {
+      const res = await request(app)
+        .patch('/api/v1/academics/classes/class-1')
+        .set('Cookie', adminCookie)
+        .send({ capacity: 45 });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to archive a class while disconnected', async () => {
+      const res = await request(app)
+        .delete('/api/v1/academics/classes/class-1')
+        .set('Cookie', adminCookie);
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to create an academic session while disconnected', async () => {
+      const res = await request(app)
+        .post('/api/v1/academics/years')
+        .set('Cookie', adminCookie)
+        .send({
+          name: '2026-2027',
+          startDate: '2026-04-01',
+          endDate: '2027-03-31',
+        });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to create a subject while disconnected', async () => {
+      const res = await request(app)
+        .post('/api/v1/academics/subjects')
+        .set('Cookie', adminCookie)
+        .send({
+          code: 'PHYS-11',
+          name: 'Physics',
+          grade: 'Grade 11',
+        });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to create an enrollment while disconnected', async () => {
+      const res = await request(app)
+        .post('/api/v1/academics/enrollments')
+        .set('Cookie', adminCookie)
+        .send({
+          studentId: 'demo-student-1',
+          academicYearId: 'ay-2024-25',
+          classId: 'class-1',
+          className: '5A',
+          rollNo: '101',
+          enrollmentDate: '2024-04-01',
+        });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
   });
 
   describe('Read-Only Fallback & Previews', () => {
-    it('GET /api/v1/guardians returns demo guardians with fallback-demo label', async () => {
+    it('GET /api/v1/guardians returns demo guardians with wards and fallback-demo label', async () => {
       const res = await request(app)
         .get('/api/v1/guardians')
         .set('Cookie', adminCookie);
@@ -298,6 +398,8 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
       expect(res.body).toHaveProperty('data');
       expect(res.body.source).toBe('fallback-demo');
       expect(res.body.isLive).toBe(false);
+      expect(res.body.data.length).toBeGreaterThanOrEqual(1);
+      expect(res.body.data[0]).toHaveProperty('wards');
     });
 
     it('GET /api/v1/staff returns demo staff with fallback-demo label', async () => {
@@ -308,6 +410,7 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
       expect(res.body).toHaveProperty('data');
       expect(res.body.source).toBe('fallback-demo');
       expect(res.body.isLive).toBe(false);
+      expect(res.body.data.some((s: any) => s.name === 'Meenakshi Sundaram')).toBe(true);
     });
 
     it('GET /api/v1/academics/years returns academic sessions', async () => {
@@ -317,6 +420,7 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('data');
       expect(res.body.source).toBe('fallback-demo');
+      expect(res.body.data.some((y: any) => y.name === '2024-2025')).toBe(true);
     });
 
     it('GET /api/v1/academics/classes returns classes list', async () => {
@@ -326,6 +430,60 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('data');
       expect(res.body.source).toBe('fallback-demo');
+      expect(res.body.data.some((c: any) => c.name === '5A')).toBe(true);
+    });
+
+    it('GET /api/v1/academics/subjects returns subjects list', async () => {
+      const res = await request(app)
+        .get('/api/v1/academics/subjects')
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('data');
+      expect(res.body.source).toBe('fallback-demo');
+      expect(res.body.data.some((s: any) => s.code === 'MATH-05')).toBe(true);
+    });
+
+    it('GET /api/v1/academics/enrollments returns empty list in disconnected mode', async () => {
+      const res = await request(app)
+        .get('/api/v1/academics/enrollments')
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('data');
+      expect(Array.isArray(res.body.data)).toBe(true);
+    });
+  });
+
+  describe('Authorization Permissions (Role Enforcement)', () => {
+    it('denies Student role from creating staff (403)', async () => {
+      const studentCookie = createTestAuthCookie({
+        id: 'student-99',
+        email: 'student@edusphere.com',
+        name: 'Student User',
+        role: 'Student',
+      });
+
+      const res = await request(app)
+        .post('/api/v1/staff')
+        .set('Cookie', studentCookie)
+        .send({ employeeId: 'EMP-99', firstName: 'Bad', lastName: 'Actor', email: 'bad@edusphere.com', phone: '123' });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('denies Parent role from creating classes (403)', async () => {
+      const parentCookie = createTestAuthCookie({
+        id: 'parent-99',
+        email: 'parent@edusphere.com',
+        name: 'Parent User',
+        role: 'Parent',
+      });
+
+      const res = await request(app)
+        .post('/api/v1/academics/classes')
+        .set('Cookie', parentCookie)
+        .send({ name: 'Class 99', grade: 'Grade 9', section: 'A' });
+
+      expect(res.status).toBe(403);
     });
   });
 });

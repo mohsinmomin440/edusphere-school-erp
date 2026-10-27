@@ -6,6 +6,7 @@ export interface IAcademicYear extends Document {
   startDate: string;
   endDate: string;
   isCurrent: boolean;
+  status: 'Upcoming' | 'Current' | 'Completed';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -17,6 +18,11 @@ const AcademicYearSchema = new Schema<IAcademicYear>(
     startDate: { type: String, required: true },
     endDate: { type: String, required: true },
     isCurrent: { type: Boolean, default: false },
+    status: {
+      type: String,
+      enum: ['Upcoming', 'Current', 'Completed'],
+      default: 'Upcoming',
+    },
   },
   { timestamps: true }
 );
@@ -33,6 +39,7 @@ export interface IClass extends Document {
   roomNo?: string;
   capacity: number;
   classTeacher?: string;
+  status: 'Active' | 'Archived';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,6 +53,12 @@ const ClassSchema = new Schema<IClass>(
     roomNo: { type: String, default: '' },
     capacity: { type: Number, default: 40 },
     classTeacher: { type: String, default: '' },
+    status: {
+      type: String,
+      enum: ['Active', 'Archived'],
+      default: 'Active',
+      index: true,
+    },
   },
   { timestamps: true }
 );

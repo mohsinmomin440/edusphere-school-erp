@@ -21,6 +21,7 @@ const DEMO_STAFF = [
     department: 'Mathematics',
     designation: 'Head of Department',
     qualification: 'Ph.D Mathematics, B.Ed',
+    joiningDate: '2020-06-15',
     status: 'Active',
   },
   {
@@ -35,6 +36,7 @@ const DEMO_STAFF = [
     department: 'Science',
     designation: 'Senior Teacher',
     qualification: 'M.Sc Physics, B.Ed',
+    joiningDate: '2021-07-01',
     status: 'Active',
   },
   {
@@ -49,7 +51,23 @@ const DEMO_STAFF = [
     department: 'English & Literature',
     designation: 'Class Teacher - 5A',
     qualification: 'M.A English, B.Ed',
+    joiningDate: '2022-04-10',
     status: 'Active',
+  },
+  {
+    _id: 'staff-4',
+    schoolId: 'school-default',
+    employeeId: 'EMP-04',
+    firstName: 'Vikram',
+    lastName: 'Joshi',
+    name: 'Vikram Joshi',
+    email: 'v.joshi@edusphere.com',
+    phone: '+91 98765 11004',
+    department: 'Social Sciences',
+    designation: 'Senior Teacher',
+    qualification: 'M.A History, B.Ed',
+    joiningDate: '2021-08-20',
+    status: 'On Leave',
   },
 ];
 
@@ -62,8 +80,11 @@ const staffInputSchema = z.object({
   department: z.string().default('Academics'),
   designation: z.string().default('Teacher'),
   qualification: z.string().optional().default(''),
+  joiningDate: z.string().optional().default(''),
   status: z.enum(['Active', 'On Leave', 'Inactive']).default('Active'),
 });
+
+const staffUpdateSchema = staffInputSchema.partial();
 
 router.get(
   '/',
@@ -71,11 +92,17 @@ router.get(
     const schoolId = req.user?.schoolId || 'school-default';
     const search = req.query.search as string;
     const department = req.query.department as string;
+    const status = req.query.status as string;
 
     if (isDBConnected()) {
       const filter: Record<string, any> = { schoolId };
       if (department && department !== 'All') {
         filter.department = department;
+      }
+      if (status && status !== 'All') {
+        filter.status = status;
+      } else if (!status) {
+        filter.status = { $ne: 'Inactive' };
       }
       if (search && search.trim()) {
         const regex = new RegExp(search.trim(), 'i');
@@ -92,6 +119,9 @@ router.get(
     let filtered = DEMO_STAFF.filter((s) => s.schoolId === schoolId);
     if (department && department !== 'All') {
       filtered = filtered.filter((s) => s.department === department);
+    }
+    if (status && status !== 'All') {
+      filtered = filtered.filter((s) => s.status === status);
     }
     if (search && search.trim()) {
       const sLower = search.trim().toLowerCase();
@@ -161,6 +191,74 @@ router.post(
     }
     const staff = await Staff.create({ ...parse.data, name: fullName, schoolId });
     return res.status(201).json({ data: staff, message: 'Staff created successfully' });
+  })
+);
+
+router.patch(
+  '/:id',
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal'),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!isDBConnected()) {
+      return res.status(503).json({
+        error: 'Database unavailable: Persistent write operations require an active MongoDB connection. Local changes cannot be safely persisted.',
+      });
+    }
+
+    const schoolId = req.user?.schoolId || 'school-default';
+    const { id } = req.params;
+    const parse = staffUpdateSchema.safeParse(req.body);
+    if (!parse.success) {
+      return res.status(400).json({ error: parse.error.issues[0]?.message || 'Validation error' });
+    }
+
+    const updateData: Record<string, any> = { ...parse.data };
+    if (parse.data.firstName || parse.data.lastName) {
+      const existing = await Staff.findOne({ _id: id, schoolId }).lean();
+      if (existing) {
+        const fName = parse.data.firstName || existing.firstName;
+        const lName = parse.data.lastName || existing.lastName;
+        updateData.name = `${fName} ${lName}`.trim();
+      }
+    }
+
+    const updated = await Staff.findOneAndUpdate(
+      { _id: id, schoolId },
+      { $set: updateData },
+      { new: true, runValidators: true }
+    ).lean();
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Staff member not found or access denied across school boundary.' });
+    }
+
+    return res.json({ data: updated, message: 'Staff member updated successfully' });
+  })
+);
+
+router.delete(
+  '/:id',
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal'),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!isDBConnected()) {
+      return res.status(503).json({
+        error: 'Database unavailable: Persistent write operations require an active MongoDB connection. Local changes cannot be safely persisted.',
+      });
+    }
+
+    const schoolId = req.user?.schoolId || 'school-default';
+    const { id } = req.params;
+
+    const archived = await Staff.findOneAndUpdate(
+      { _id: id, schoolId },
+      { $set: { status: 'Inactive' } },
+      { new: true }
+    ).lean();
+
+    if (!archived) {
+      return res.status(404).json({ error: 'Staff member not found or access denied across school boundary.' });
+    }
+
+    return res.json({ data: archived, message: 'Staff member deactivated successfully' });
   })
 );
 
