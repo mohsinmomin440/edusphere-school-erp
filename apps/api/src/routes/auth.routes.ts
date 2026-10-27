@@ -6,6 +6,7 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { validateLogin } from '../validation/auth.validation';
 import { authenticate } from '../middleware/auth.middleware';
 import { isDBConnected } from '../config/database';
+import { getAuthSecret } from '../config/jwt';
 
 const router = Router();
 
@@ -58,7 +59,7 @@ router.post(
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const secret = process.env.AUTH_SECRET || 'edusphere-dev-secret-change-in-production';
+    const secret = getAuthSecret();
     const token = jwt.sign(
       {
         sub: userToAuth.id,

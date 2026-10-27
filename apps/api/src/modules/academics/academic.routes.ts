@@ -27,9 +27,17 @@ router.get(
     const schoolId = req.user?.schoolId || 'school-default';
     if (isDBConnected()) {
       const years = await AcademicYear.find({ schoolId }).sort({ startDate: -1 }).lean();
-      return res.json({ data: years });
+      return res.json({
+        data: years,
+        source: 'database',
+        isLive: true,
+      });
     }
-    return res.json({ data: DEMO_YEARS });
+    return res.json({
+      data: DEMO_YEARS,
+      source: 'fallback-demo',
+      isLive: false,
+    });
   })
 );
 
@@ -39,9 +47,17 @@ router.get(
     const schoolId = req.user?.schoolId || 'school-default';
     if (isDBConnected()) {
       const classes = await ClassModel.find({ schoolId }).sort({ grade: 1, section: 1 }).lean();
-      return res.json({ data: classes });
+      return res.json({
+        data: classes,
+        source: 'database',
+        isLive: true,
+      });
     }
-    return res.json({ data: DEMO_CLASSES });
+    return res.json({
+      data: DEMO_CLASSES,
+      source: 'fallback-demo',
+      isLive: false,
+    });
   })
 );
 
@@ -58,27 +74,24 @@ router.post(
   '/classes',
   requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal'),
   asyncHandler(async (req: Request, res: Response) => {
+    if (!isDBConnected()) {
+      return res.status(503).json({
+        error: 'Database unavailable: Persistent write operations require an active MongoDB connection. Local changes cannot be safely persisted.',
+      });
+    }
+
     const schoolId = req.user?.schoolId || 'school-default';
     const parse = classInputSchema.safeParse(req.body);
     if (!parse.success) {
       return res.status(400).json({ error: parse.error.issues[0]?.message || 'Validation error' });
     }
 
-    if (isDBConnected()) {
-      const existing = await ClassModel.findOne({ schoolId, grade: parse.data.grade, section: parse.data.section });
-      if (existing) {
-        return res.status(400).json({ error: `Class ${parse.data.grade} Section ${parse.data.section} already exists.` });
-      }
-      const newClass = await ClassModel.create({ ...parse.data, schoolId });
-      return res.status(201).json({ data: newClass, message: 'Class created successfully' });
+    const existing = await ClassModel.findOne({ schoolId, grade: parse.data.grade, section: parse.data.section });
+    if (existing) {
+      return res.status(400).json({ error: `Class ${parse.data.grade} Section ${parse.data.section} already exists.` });
     }
-
-    const demo = {
-      _id: `class-${Date.now()}`,
-      schoolId,
-      ...parse.data,
-    };
-    return res.status(201).json({ data: demo, message: 'Class created successfully' });
+    const newClass = await ClassModel.create({ ...parse.data, schoolId });
+    return res.status(201).json({ data: newClass, message: 'Class created successfully' });
   })
 );
 

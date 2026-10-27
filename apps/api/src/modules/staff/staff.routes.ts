@@ -53,8 +53,6 @@ const DEMO_STAFF = [
   },
 ];
 
-let localStaffStore = [...DEMO_STAFF];
-
 const staffInputSchema = z.object({
   employeeId: z.string().min(1, 'Employee ID is required'),
   firstName: z.string().min(1, 'First name is required'),
@@ -84,10 +82,14 @@ router.get(
         filter.$or = [{ name: regex }, { employeeId: regex }, { email: regex }, { department: regex }];
       }
       const staffList = await Staff.find(filter).sort({ name: 1 }).lean();
-      return res.json({ data: staffList });
+      return res.json({
+        data: staffList,
+        source: 'database',
+        isLive: true,
+      });
     }
 
-    let filtered = localStaffStore.filter((s) => s.schoolId === schoolId);
+    let filtered = DEMO_STAFF.filter((s) => s.schoolId === schoolId);
     if (department && department !== 'All') {
       filtered = filtered.filter((s) => s.department === department);
     }
@@ -101,7 +103,11 @@ router.get(
       );
     }
 
-    return res.json({ data: filtered });
+    return res.json({
+      data: filtered,
+      source: 'fallback-demo',
+      isLive: false,
+    });
   })
 );
 
@@ -114,12 +120,20 @@ router.get(
     if (isDBConnected()) {
       const staff = await Staff.findOne({ _id: id, schoolId }).lean();
       if (!staff) return res.status(404).json({ error: 'Staff member not found' });
-      return res.json({ data: staff });
+      return res.json({
+        data: staff,
+        source: 'database',
+        isLive: true,
+      });
     }
 
-    const member = localStaffStore.find((s) => s._id === id && s.schoolId === schoolId);
+    const member = DEMO_STAFF.find((s) => s._id === id && s.schoolId === schoolId);
     if (!member) return res.status(404).json({ error: 'Staff member not found' });
-    return res.json({ data: member });
+    return res.json({
+      data: member,
+      source: 'fallback-demo',
+      isLive: false,
+    });
   })
 );
 
@@ -127,6 +141,12 @@ router.post(
   '/',
   requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal'),
   asyncHandler(async (req: Request, res: Response) => {
+    if (!isDBConnected()) {
+      return res.status(503).json({
+        error: 'Database unavailable: Persistent write operations require an active MongoDB connection. Local changes cannot be safely persisted.',
+      });
+    }
+
     const schoolId = req.user?.schoolId || 'school-default';
     const parse = staffInputSchema.safeParse(req.body);
     if (!parse.success) {
@@ -135,23 +155,12 @@ router.post(
 
     const fullName = `${parse.data.firstName} ${parse.data.lastName}`.trim();
 
-    if (isDBConnected()) {
-      const existing = await Staff.findOne({ schoolId, employeeId: parse.data.employeeId });
-      if (existing) {
-        return res.status(400).json({ error: `Employee ID "${parse.data.employeeId}" already exists.` });
-      }
-      const staff = await Staff.create({ ...parse.data, name: fullName, schoolId });
-      return res.status(201).json({ data: staff, message: 'Staff created successfully' });
+    const existing = await Staff.findOne({ schoolId, employeeId: parse.data.employeeId });
+    if (existing) {
+      return res.status(400).json({ error: `Employee ID "${parse.data.employeeId}" already exists.` });
     }
-
-    const demo = {
-      _id: `staff-${Date.now()}`,
-      schoolId,
-      ...parse.data,
-      name: fullName,
-    };
-    localStaffStore.push(demo as any);
-    return res.status(201).json({ data: demo, message: 'Staff created successfully' });
+    const staff = await Staff.create({ ...parse.data, name: fullName, schoolId });
+    return res.status(201).json({ data: staff, message: 'Staff created successfully' });
   })
 );
 

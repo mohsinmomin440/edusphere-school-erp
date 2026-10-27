@@ -13,7 +13,8 @@ router.use(authenticate);
 router.get(
   '/',
   asyncHandler(async (req: Request, res: Response) => {
-    const schoolId = req.user?.schoolId || 'school-default';
+    const user = req.user!;
+    const schoolId = user.schoolId || 'school-default';
     const search = req.query.search as string;
 
     if (isDBConnected()) {
@@ -23,11 +24,15 @@ router.get(
         filter.$or = [{ name: regex }, { phone: regex }, { email: regex }];
       }
       const guardians = await Guardian.find(filter).sort({ name: 1 }).lean();
-      return res.json({ data: guardians });
+      return res.json({
+        data: guardians,
+        source: 'database',
+        isLive: true,
+      });
     }
 
-    // In detached mode, derive guardians from local demo student store without buffering Mongoose queries
-    const { data: students } = await studentService.getStudents(schoolId, {
+    // In detached mode, derive guardians from local demo student store
+    const { data: students } = await studentService.getStudents(user, {
       page: 1,
       limit: 100,
       sortBy: 'createdAt',
@@ -44,7 +49,11 @@ router.get(
       occupation: s.guardian?.occupation || '',
     }));
 
-    return res.json({ data: demoGuardians });
+    return res.json({
+      data: demoGuardians,
+      source: 'fallback-demo',
+      isLive: false,
+    });
   })
 );
 
@@ -64,18 +73,26 @@ router.get(
         $or: [{ 'guardian.id': guardian._id }, { 'guardian.phone': guardian.phone }],
       }).lean();
 
-      return res.json({ data: { ...guardian, wards } });
+      return res.json({
+        data: { ...guardian, wards },
+        source: 'database',
+        isLive: true,
+      });
     }
 
+    // Disconnected mode read
     return res.json({
       data: {
         _id: id,
+        schoolId,
         name: 'Rahul Sharma',
         phone: '+91 98765 43210',
         email: 'rahul.sharma@example.com',
         relationship: 'Father',
         wards: [],
       },
+      source: 'fallback-demo',
+      isLive: false,
     });
   })
 );
@@ -84,6 +101,12 @@ router.post(
   '/',
   requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Admission Officer'),
   asyncHandler(async (req: Request, res: Response) => {
+    if (!isDBConnected()) {
+      return res.status(503).json({
+        error: 'Database unavailable: Persistent write operations require an active MongoDB connection. Local changes cannot be safely persisted.',
+      });
+    }
+
     const schoolId = req.user?.schoolId || 'school-default';
     const { name, phone, email, relationship, occupation, address } = req.body;
 
@@ -91,21 +114,7 @@ router.post(
       return res.status(400).json({ error: 'Guardian name and phone are required' });
     }
 
-    if (isDBConnected()) {
-      const guardian = await Guardian.create({
-        schoolId,
-        name,
-        phone,
-        email: email || '',
-        relationship: relationship || 'Guardian',
-        occupation: occupation || '',
-        address: address || '',
-      });
-      return res.status(201).json({ data: guardian, message: 'Guardian registered successfully' });
-    }
-
-    const demoGuardian = {
-      _id: `g-${Date.now()}`,
+    const guardian = await Guardian.create({
       schoolId,
       name,
       phone,
@@ -113,8 +122,8 @@ router.post(
       relationship: relationship || 'Guardian',
       occupation: occupation || '',
       address: address || '',
-    };
-    return res.status(201).json({ data: demoGuardian, message: 'Guardian registered successfully' });
+    });
+    return res.status(201).json({ data: guardian, message: 'Guardian registered successfully' });
   })
 );
 

@@ -1,9 +1,13 @@
 import app from './app';
 import { connectDB } from './config/database';
+import { getAuthSecret } from './config/jwt';
 
 const PORT = Number(process.env.PORT) || 4000;
 
 const startServer = async () => {
+  // Validate JWT security configuration on startup
+  getAuthSecret();
+
   await connectDB();
 
   app.listen(PORT, () => {

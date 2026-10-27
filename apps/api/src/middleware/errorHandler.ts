@@ -7,10 +7,15 @@ export const errorHandler = (
   res: express.Response,
   _next: express.NextFunction
 ) => {
-  console.error(err);
+  if (err.statusCode && typeof err.statusCode === 'number') {
+    return res.status(err.statusCode).json({ error: err.message });
+  }
+
   if (err instanceof ZodError) {
     const errorDetails = (err as any).issues || (err as any).errors || err.message;
     return res.status(400).json({ error: errorDetails });
   }
-  return res.status(500).json({ error: 'Internal Server Error' });
+
+  console.error(err);
+  return res.status(500).json({ error: err.message || 'Internal Server Error' });
 };

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { getAuthSecret } from '../config/jwt';
 
 export interface AuthUser {
   id: string;
@@ -7,6 +8,9 @@ export interface AuthUser {
   name: string;
   role: string;
   schoolId?: string;
+  linkedStudentIds?: string[];
+  assignedClasses?: string[];
+  studentProfileId?: string;
 }
 
 declare global {
@@ -28,7 +32,7 @@ export const authenticate = (req: Request, res: Response, next: NextFunction) =>
     return res.status(401).json({ error: 'Unauthenticated: No token provided' });
   }
 
-  const secret = process.env.AUTH_SECRET || 'edusphere-dev-secret-change-in-production';
+  const secret = getAuthSecret();
 
   try {
     const decoded = jwt.verify(token, secret) as AuthUser & { sub?: string };
@@ -37,7 +41,10 @@ export const authenticate = (req: Request, res: Response, next: NextFunction) =>
       email: decoded.email || '',
       name: decoded.name || '',
       role: decoded.role || '',
-      schoolId: decoded.schoolId,
+      schoolId: decoded.schoolId || 'school-default',
+      linkedStudentIds: decoded.linkedStudentIds || [],
+      assignedClasses: decoded.assignedClasses || [],
+      studentProfileId: decoded.studentProfileId || (decoded.role === 'Student' ? (decoded.id || decoded.sub) : undefined),
     };
     return next();
   } catch (_error) {

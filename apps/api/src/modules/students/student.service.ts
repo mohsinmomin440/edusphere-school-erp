@@ -6,6 +6,8 @@ import {
   StudentQueryInput,
 } from './student.validation';
 import { isDBConnected } from '../../config/database';
+import { AuthUser } from '../../middleware/auth.middleware';
+import { DatabaseUnavailableError, ForbiddenError, NotFoundError } from '../../errors';
 
 // Initial synthetic seed data matching the EduSphere design reference
 const DEMO_STUDENTS: any[] = [
@@ -149,13 +151,36 @@ const DEMO_STUDENTS: any[] = [
 let localDemoStore = [...DEMO_STUDENTS];
 
 export const getStudents = async (
-  schoolId: string,
+  user: AuthUser,
   query: StudentQueryInput
 ) => {
+  const schoolId = user.schoolId || 'school-default';
   const { page, limit, search, class: classFilter, status, sortBy, sortOrder } = query;
 
   if (isDBConnected()) {
     const filter: Record<string, any> = { schoolId };
+
+    // Multi-tenant and role-based scoping
+    if (user.role === 'Parent') {
+      const linkedIds = user.linkedStudentIds || [];
+      const userEmail = (user.email || '').toLowerCase();
+      filter.$or = [
+        ...(linkedIds.length > 0 ? [{ _id: { $in: linkedIds } }] : []),
+        ...(userEmail ? [{ 'guardian.email': userEmail }] : []),
+      ];
+      // If neither linked IDs nor guardian email match, Parent cannot see any records
+      if (filter.$or.length === 0) {
+        filter._id = null;
+        delete filter.$or;
+      }
+    } else if (user.role === 'Student') {
+      const targetId = user.studentProfileId || user.id;
+      filter._id = targetId;
+    } else if (user.role === 'Teacher') {
+      if (user.assignedClasses && user.assignedClasses.length > 0) {
+        filter.class = { $in: user.assignedClasses };
+      }
+    }
 
     if (status && status !== 'All') {
       filter.status = status;
@@ -169,12 +194,18 @@ export const getStudents = async (
 
     if (search && search.trim()) {
       const searchRegex = new RegExp(search.trim(), 'i');
-      filter.$or = [
+      const searchConditions = [
         { name: searchRegex },
         { admissionNo: searchRegex },
         { rollNo: searchRegex },
         { 'guardian.name': searchRegex },
       ];
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: searchConditions }];
+        delete filter.$or;
+      } else {
+        filter.$or = searchConditions;
+      }
     }
 
     const sortOptions: Record<string, 1 | -1> = {
@@ -197,13 +228,32 @@ export const getStudents = async (
         totalPages: Math.ceil(total / limit) || 1,
       },
       source: 'database',
+      isLive: true,
     };
   }
 
-  // Fallback in-memory preview when Atlas is disconnected
+  // Fallback in-memory read-only preview when Atlas is disconnected
   let filtered = localDemoStore.filter(
     (s) => (s.schoolId || 'school-default') === schoolId
   );
+
+  // Role-based filtering on demo store
+  if (user.role === 'Parent') {
+    const linkedIds = user.linkedStudentIds || [];
+    const userEmail = (user.email || '').toLowerCase();
+    filtered = filtered.filter(
+      (s) =>
+        linkedIds.includes(s._id) ||
+        (s.guardian?.email && s.guardian.email.toLowerCase() === userEmail)
+    );
+  } else if (user.role === 'Student') {
+    const targetId = user.studentProfileId || user.id;
+    filtered = filtered.filter((s) => s._id === targetId);
+  } else if (user.role === 'Teacher') {
+    if (user.assignedClasses && user.assignedClasses.length > 0) {
+      filtered = filtered.filter((s) => user.assignedClasses!.includes(s.class));
+    }
+  }
 
   if (status && status !== 'All') {
     filtered = filtered.filter((s) => s.status === status);
@@ -239,106 +289,135 @@ export const getStudents = async (
       totalPages: Math.ceil(total / limit) || 1,
     },
     source: 'fallback-demo',
+    isLive: false,
   };
 };
 
-export const getStudentById = async (id: string, schoolId: string) => {
-  if (isDBConnected()) {
-    return Student.findOne({ _id: id, schoolId }).lean();
+export const getStudentById = async (id: string, user: AuthUser) => {
+  const schoolId = user.schoolId || 'school-default';
+
+  // Role-based quick checks
+  if (user.role === 'Student') {
+    const targetId = user.studentProfileId || user.id;
+    if (id !== targetId) {
+      throw new ForbiddenError('Forbidden: You can only view your own student record.');
+    }
   }
-  return localDemoStore.find((s) => s._id === id && (s.schoolId || 'school-default') === schoolId) || null;
+
+  let student: any = null;
+
+  if (isDBConnected()) {
+    student = await Student.findOne({ _id: id, schoolId }).lean();
+  } else {
+    student =
+      localDemoStore.find(
+        (s) => s._id === id && (s.schoolId || 'school-default') === schoolId
+      ) || null;
+  }
+
+  if (!student) {
+    throw new NotFoundError('Student record not found.');
+  }
+
+  // Check parent linkage
+  if (user.role === 'Parent') {
+    const linkedIds = user.linkedStudentIds || [];
+    const userEmail = (user.email || '').toLowerCase();
+    const isLinked =
+      linkedIds.includes(student._id.toString()) ||
+      (student.guardian?.email && student.guardian.email.toLowerCase() === userEmail);
+    if (!isLinked) {
+      throw new ForbiddenError('Forbidden: You can only view records of your linked children.');
+    }
+  }
+
+  // Check teacher class assignment
+  if (user.role === 'Teacher') {
+    if (user.assignedClasses && user.assignedClasses.length > 0) {
+      if (!user.assignedClasses.includes(student.class)) {
+        throw new ForbiddenError('Forbidden: You can only view students in your assigned classes.');
+      }
+    }
+  }
+
+  return student;
 };
 
 export const createStudent = async (
   input: CreateStudentInput,
-  schoolId: string
+  user: AuthUser
 ) => {
-  const fullName = `${input.firstName} ${input.lastName}`.trim();
-
-  if (isDBConnected()) {
-    // Check duplicate admission number
-    const existing = await Student.findOne({ schoolId, admissionNo: input.admissionNo });
-    if (existing) {
-      throw new Error(`A student with admission number "${input.admissionNo}" already exists in this school.`);
-    }
-
-    // Check duplicate roll number in same class
-    const duplicateRoll = await Student.findOne({
-      schoolId,
-      class: input.class,
-      rollNo: input.rollNo,
-      status: { $ne: 'Archived' },
-    });
-    if (duplicateRoll) {
-      throw new Error(`Roll number ${input.rollNo} is already assigned to another student in class ${input.class}.`);
-    }
-
-    // Upsert or create guardian record
-    let guardianDoc = await Guardian.findOne({
-      schoolId,
-      phone: input.guardian.phone,
-    });
-    if (!guardianDoc) {
-      guardianDoc = await Guardian.create({
-        schoolId,
-        name: input.guardian.name,
-        relationship: input.guardian.relationship,
-        phone: input.guardian.phone,
-        email: input.guardian.email || '',
-        occupation: input.guardian.occupation || '',
-      });
-    }
-
-    const newStudent = await Student.create({
-      ...input,
-      name: fullName,
-      schoolId,
-      guardian: {
-        ...input.guardian,
-        id: guardianDoc._id,
-      },
-    });
-
-    return newStudent;
+  if (!isDBConnected()) {
+    throw new DatabaseUnavailableError(
+      'Database unavailable: Persistent write operations require an active MongoDB connection. Configure MONGODB_URI to enable student creation.'
+    );
   }
 
-  // Fallback demo creation for development testing without live Atlas
-  const newDemoStudent = {
-    _id: `demo-student-${Date.now()}`,
+  const schoolId = user.schoolId || 'school-default';
+  const fullName = `${input.firstName} ${input.lastName}`.trim();
+
+  // Check duplicate admission number
+  const existing = await Student.findOne({ schoolId, admissionNo: input.admissionNo });
+  if (existing) {
+    throw new Error(`A student with admission number "${input.admissionNo}" already exists in this school.`);
+  }
+
+  // Check duplicate roll number in same class
+  const duplicateRoll = await Student.findOne({
     schoolId,
-    admissionNo: input.admissionNo,
-    rollNo: input.rollNo,
-    firstName: input.firstName,
-    lastName: input.lastName,
-    name: fullName,
     class: input.class,
-    section: input.section || 'A',
-    grade: input.grade || `Grade ${input.class.replace(/\D/g, '')}`,
-    gender: input.gender,
-    dateOfBirth: input.dateOfBirth,
-    email: input.email || '',
-    phone: input.phone || '',
-    address: input.address || '',
-    status: input.status,
+    rollNo: input.rollNo,
+    status: { $ne: 'Archived' },
+  });
+  if (duplicateRoll) {
+    throw new Error(`Roll number ${input.rollNo} is already assigned to another student in class ${input.class}.`);
+  }
+
+  // Upsert or create guardian record
+  let guardianDoc = await Guardian.findOne({
+    schoolId,
+    phone: input.guardian.phone,
+  });
+  if (!guardianDoc) {
+    guardianDoc = await Guardian.create({
+      schoolId,
+      name: input.guardian.name,
+      relationship: input.guardian.relationship,
+      phone: input.guardian.phone,
+      email: input.guardian.email || '',
+      occupation: input.guardian.occupation || '',
+    });
+  }
+
+  const newStudent = await Student.create({
+    ...input,
+    name: fullName,
+    schoolId,
     guardian: {
       ...input.guardian,
+      id: guardianDoc._id,
     },
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+  });
 
-  localDemoStore.unshift(newDemoStudent as any);
-  return newDemoStudent;
+  return newStudent;
 };
 
 export const updateStudent = async (
   id: string,
   input: UpdateStudentInput,
-  schoolId: string
+  user: AuthUser
 ) => {
+  if (!isDBConnected()) {
+    throw new DatabaseUnavailableError(
+      'Database unavailable: Persistent write operations require an active MongoDB connection. Configure MONGODB_URI to enable student updates.'
+    );
+  }
+
+  const schoolId = user.schoolId || 'school-default';
   const updateData: Record<string, any> = { ...input };
+
   if (input.firstName || input.lastName) {
-    const existing = await getStudentById(id, schoolId);
+    const existing = await Student.findOne({ _id: id, schoolId }).lean();
     if (existing) {
       const fName = input.firstName || (existing as any).firstName;
       const lName = input.lastName || (existing as any).lastName;
@@ -346,51 +425,36 @@ export const updateStudent = async (
     }
   }
 
-  if (isDBConnected()) {
-    const updated = await Student.findOneAndUpdate(
-      { _id: id, schoolId },
-      { $set: updateData },
-      { new: true, runValidators: true }
-    ).lean();
+  const updated = await Student.findOneAndUpdate(
+    { _id: id, schoolId },
+    { $set: updateData },
+    { new: true, runValidators: true }
+  ).lean();
 
-    if (!updated) {
-      throw new Error('Student not found or access denied.');
-    }
-    return updated;
+  if (!updated) {
+    throw new NotFoundError('Student not found or access denied across school boundary.');
   }
-
-  const index = localDemoStore.findIndex((s) => s._id === id);
-  if (index === -1) {
-    throw new Error('Student not found.');
-  }
-
-  localDemoStore[index] = {
-    ...localDemoStore[index],
-    ...updateData,
-    updatedAt: new Date(),
-  };
-  return localDemoStore[index];
+  return updated;
 };
 
-export const archiveStudent = async (id: string, schoolId: string) => {
-  if (isDBConnected()) {
-    const archived = await Student.findOneAndUpdate(
-      { _id: id, schoolId },
-      { $set: { status: 'Archived' } },
-      { new: true }
-    ).lean();
-    if (!archived) {
-      throw new Error('Student not found.');
-    }
-    return archived;
+export const archiveStudent = async (id: string, user: AuthUser) => {
+  if (!isDBConnected()) {
+    throw new DatabaseUnavailableError(
+      'Database unavailable: Persistent write operations require an active MongoDB connection. Configure MONGODB_URI to enable archiving.'
+    );
   }
 
-  const student = localDemoStore.find((s) => s._id === id);
-  if (!student) {
-    throw new Error('Student not found.');
+  const schoolId = user.schoolId || 'school-default';
+  const archived = await Student.findOneAndUpdate(
+    { _id: id, schoolId },
+    { $set: { status: 'Archived' } },
+    { new: true }
+  ).lean();
+
+  if (!archived) {
+    throw new NotFoundError('Student not found.');
   }
-  student.status = 'Archived';
-  return student;
+  return archived;
 };
 
 export const resetDemoStore = () => {

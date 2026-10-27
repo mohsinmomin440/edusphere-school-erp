@@ -107,22 +107,36 @@ export const StudentManagement: React.FC = () => {
       },
     };
 
-    if (editingStudent) {
-      await axios.patch(`/api/v1/students/${editingStudent._id}`, payload, {
-        withCredentials: true,
-      });
-    } else {
-      await axios.post('/api/v1/students', payload, {
-        withCredentials: true,
-      });
+    try {
+      if (editingStudent) {
+        await axios.patch(`/api/v1/students/${editingStudent._id}`, payload, {
+          withCredentials: true,
+        });
+      } else {
+        await axios.post('/api/v1/students', payload, {
+          withCredentials: true,
+        });
+      }
+      fetchStudents();
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.error ||
+          'Operation failed: Persistent database storage is required to save changes.'
+      );
     }
-    fetchStudents();
   };
 
   const handleArchive = async (id: string) => {
     if (window.confirm('Are you sure you want to archive this student record?')) {
-      await axios.delete(`/api/v1/students/${id}`, { withCredentials: true });
-      fetchStudents();
+      try {
+        await axios.delete(`/api/v1/students/${id}`, { withCredentials: true });
+        fetchStudents();
+      } catch (err: any) {
+        setError(
+          err?.response?.data?.error ||
+            'Archive failed: Persistent database storage is required to update records.'
+        );
+      }
     }
   };
 
@@ -160,7 +174,7 @@ export const StudentManagement: React.FC = () => {
           <div className="flex items-center gap-2">
             <Database className="w-4 h-4 text-amber-600 flex-shrink-0" />
             <span>
-              <strong>Local Preview Mode:</strong> Running with synthetic demo records. Configure <code>MONGODB_URI</code> in <code>.env</code> for live MongoDB Atlas persistence.
+              <strong>Read-Only Preview Mode:</strong> Displaying reference records. Persistent create/update/archive operations require an active MongoDB connection.
             </span>
           </div>
           <span className="font-semibold text-amber-900 bg-amber-100 px-2 py-0.5 rounded text-[11px]">

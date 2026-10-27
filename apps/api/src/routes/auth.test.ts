@@ -74,5 +74,7 @@ describe('Authentication & Dashboard API', () => {
     expect(summaryRes.body.stats).toHaveProperty('totalStudents');
     expect(summaryRes.body).toHaveProperty('enrollmentTrend');
     expect(summaryRes.body).toHaveProperty('recentActivities');
+    expect(summaryRes.body).toHaveProperty('source');
+    expect(summaryRes.body).toHaveProperty('isLive');
   });
 });

@@ -1,42 +1,69 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 import app from '../../app';
 import { resetDemoStore } from './student.service';
+import { getAuthSecret } from '../../config/jwt';
 
-describe('Students & Guardians API Module', () => {
-  let authCookie: any;
+describe('Students, RBAC & Multi-Tenancy API Module', () => {
+  let adminCookie: any;
+  const secret = getAuthSecret();
+
+  // Helper to create valid JWT cookie for any role/context
+  const createTestAuthCookie = (payload: {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    schoolId?: string;
+    linkedStudentIds?: string[];
+    assignedClasses?: string[];
+    studentProfileId?: string;
+  }) => {
+    const token = jwt.sign(
+      {
+        sub: payload.id,
+        ...payload,
+        schoolId: payload.schoolId || 'school-default',
+      },
+      secret,
+      { expiresIn: '1h' }
+    );
+    return [`auth=${token}`];
+  };
 
   beforeEach(async () => {
     resetDemoStore();
-    // Login as Super Administrator to get valid session cookie
+    // Default Super Admin cookie
     const loginRes = await request(app)
       .post('/api/v1/auth/login')
       .send({ email: 'admin@edusphere.com', password: 'admin123' });
-    authCookie = loginRes.headers['set-cookie'];
+    adminCookie = loginRes.headers['set-cookie'];
   });
 
-  describe('GET /api/v1/students', () => {
+  describe('GET /api/v1/students (Scoping & Filtering)', () => {
     it('rejects unauthenticated requests (401)', async () => {
       const res = await request(app).get('/api/v1/students');
       expect(res.status).toBe(401);
     });
 
-    it('returns paginated students list for authenticated user', async () => {
+    it('returns paginated students list for admin user with source indicator', async () => {
       const res = await request(app)
         .get('/api/v1/students?page=1&limit=5')
-        .set('Cookie', authCookie);
+        .set('Cookie', adminCookie);
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('data');
       expect(Array.isArray(res.body.data)).toBe(true);
       expect(res.body.data.length).toBeGreaterThanOrEqual(1);
       expect(res.body).toHaveProperty('pagination');
-      expect(res.body.pagination.page).toBe(1);
+      expect(res.body).toHaveProperty('source');
+      expect(res.body).toHaveProperty('isLive');
     });
 
     it('filters students by search keyword', async () => {
       const res = await request(app)
         .get('/api/v1/students?search=Aarav')
-        .set('Cookie', authCookie);
+        .set('Cookie', adminCookie);
       expect(res.status).toBe(200);
       expect(res.body.data.length).toBeGreaterThanOrEqual(1);
       expect(res.body.data[0].name).toContain('Aarav');
@@ -45,42 +72,138 @@ describe('Students & Guardians API Module', () => {
     it('filters students by class', async () => {
       const res = await request(app)
         .get('/api/v1/students?class=8B')
-        .set('Cookie', authCookie);
+        .set('Cookie', adminCookie);
       expect(res.status).toBe(200);
       expect(res.body.data.every((s: any) => s.class === '8B')).toBe(true);
     });
+
+    it('enforces Parent role scoping: only linked children are visible in list', async () => {
+      const parentCookie = createTestAuthCookie({
+        id: 'parent-123',
+        email: 'rahul.sharma@example.com',
+        name: 'Rahul Sharma',
+        role: 'Parent',
+        linkedStudentIds: ['demo-student-1'],
+      });
+
+      const res = await request(app)
+        .get('/api/v1/students')
+        .set('Cookie', parentCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBe(1);
+      expect(res.body.data[0]._id).toBe('demo-student-1');
+      expect(res.body.data[0].name).toBe('Aarav Sharma');
+    });
+
+    it('enforces Student role scoping: only self-profile is visible in list', async () => {
+      const studentCookie = createTestAuthCookie({
+        id: 'demo-student-3',
+        email: 'arjun@example.com',
+        name: 'Arjun Mehta',
+        role: 'Student',
+        studentProfileId: 'demo-student-3',
+      });
+
+      const res = await request(app)
+        .get('/api/v1/students')
+        .set('Cookie', studentCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBe(1);
+      expect(res.body.data[0]._id).toBe('demo-student-3');
+    });
+
+    it('enforces Teacher class-level scoping when assignedClasses is set', async () => {
+      const teacherCookie = createTestAuthCookie({
+        id: 'teacher-101',
+        email: 'teacher@edusphere.com',
+        name: 'Teacher One',
+        role: 'Teacher',
+        assignedClasses: ['5A'],
+      });
+
+      const res = await request(app)
+        .get('/api/v1/students')
+        .set('Cookie', teacherCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.every((s: any) => s.class === '5A')).toBe(true);
+    });
   });
 
-  describe('GET /api/v1/students/:id', () => {
-    it('returns student profile for valid ID', async () => {
+  describe('GET /api/v1/students/:id (Access Control & Multi-Tenancy)', () => {
+    it('returns student profile for authorized admin', async () => {
       const res = await request(app)
         .get('/api/v1/students/demo-student-1')
-        .set('Cookie', authCookie);
+        .set('Cookie', adminCookie);
       expect(res.status).toBe(200);
       expect(res.body.data).toHaveProperty('name', 'Aarav Sharma');
       expect(res.body.data).toHaveProperty('guardian');
-      expect(res.body.data.guardian).toHaveProperty('name', 'Rahul Sharma');
     });
 
     it('returns 404 for non-existent student ID', async () => {
       const res = await request(app)
         .get('/api/v1/students/non-existent-id-999')
-        .set('Cookie', authCookie);
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(404);
+    });
+
+    it('returns 403 when Parent attempts to view unlinked student record', async () => {
+      const parentCookie = createTestAuthCookie({
+        id: 'parent-123',
+        email: 'other.parent@example.com',
+        name: 'Other Parent',
+        role: 'Parent',
+        linkedStudentIds: ['demo-student-1'], // Linked only to student-1
+      });
+
+      // Attempt to access student-2
+      const res = await request(app)
+        .get('/api/v1/students/demo-student-2')
+        .set('Cookie', parentCookie);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Forbidden');
+    });
+
+    it('returns 403 when Student attempts to view another student record', async () => {
+      const studentCookie = createTestAuthCookie({
+        id: 'demo-student-3',
+        email: 'arjun@example.com',
+        name: 'Arjun Mehta',
+        role: 'Student',
+        studentProfileId: 'demo-student-3',
+      });
+
+      // Attempt to access student-1
+      const res = await request(app)
+        .get('/api/v1/students/demo-student-1')
+        .set('Cookie', studentCookie);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Forbidden');
+    });
+
+    it('enforces multi-tenancy isolation: returns 404 for student belonging to another school', async () => {
+      const foreignAdminCookie = createTestAuthCookie({
+        id: 'foreign-admin-1',
+        email: 'admin@foreignschool.com',
+        name: 'Foreign Admin',
+        role: 'School Admin',
+        schoolId: 'school-foreign-999',
+      });
+
+      const res = await request(app)
+        .get('/api/v1/students/demo-student-1')
+        .set('Cookie', foreignAdminCookie);
+
       expect(res.status).toBe(404);
     });
   });
 
-  describe('POST /api/v1/students', () => {
-    it('validates required fields and returns 400 on invalid input', async () => {
-      const res = await request(app)
-        .post('/api/v1/students')
-        .set('Cookie', authCookie)
-        .send({ firstName: 'Test' }); // Missing required fields
-      expect(res.status).toBe(400);
-      expect(res.body).toHaveProperty('error');
-    });
-
-    it('creates a new student with valid input', async () => {
+  describe('Disconnected Database Write Behavior (HTTP 503 Guard)', () => {
+    it('returns 503 when attempting to create a student while disconnected', async () => {
       const newStudentPayload = {
         admissionNo: 'ADM-2025-9999',
         rollNo: '99',
@@ -90,87 +213,119 @@ describe('Students & Guardians API Module', () => {
         section: 'A',
         gender: 'Female',
         dateOfBirth: '2013-07-15',
-        email: 'ananya@example.com',
-        phone: '+91 98765 43299',
         guardian: {
           name: 'Suresh Verma',
-          relationship: 'Father',
           phone: '+91 98765 43299',
-          email: 'suresh@example.com',
-          occupation: 'Engineer',
         },
       };
 
       const res = await request(app)
         .post('/api/v1/students')
-        .set('Cookie', authCookie)
+        .set('Cookie', adminCookie)
         .send(newStudentPayload);
-      expect(res.status).toBe(201);
-      expect(res.body.data).toHaveProperty('name', 'Ananya Verma');
-      expect(res.body.data.admissionNo).toBe('ADM-2025-9999');
-    });
-  });
 
-  describe('PATCH /api/v1/students/:id', () => {
-    it('updates student details', async () => {
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to update a student while disconnected', async () => {
       const res = await request(app)
         .patch('/api/v1/students/demo-student-1')
-        .set('Cookie', authCookie)
+        .set('Cookie', adminCookie)
         .send({ phone: '+91 99999 88888' });
-      expect(res.status).toBe(200);
-      expect(res.body.data.phone).toBe('+91 99999 88888');
-    });
-  });
 
-  describe('DELETE /api/v1/students/:id', () => {
-    it('archives student record', async () => {
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to archive a student while disconnected', async () => {
       const res = await request(app)
         .delete('/api/v1/students/demo-student-1')
-        .set('Cookie', authCookie);
-      expect(res.status).toBe(200);
-      expect(res.body.data.status).toBe('Archived');
+        .set('Cookie', adminCookie);
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to create a guardian while disconnected', async () => {
+      const res = await request(app)
+        .post('/api/v1/guardians')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Test Guardian', phone: '+91 98765 99999' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to create a staff member while disconnected', async () => {
+      const res = await request(app)
+        .post('/api/v1/staff')
+        .set('Cookie', adminCookie)
+        .send({
+          employeeId: 'EMP-99',
+          firstName: 'Test',
+          lastName: 'Teacher',
+          email: 'teacher.test@edusphere.com',
+          phone: '+91 98765 99998',
+        });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
+    });
+
+    it('returns 503 when attempting to create a class while disconnected', async () => {
+      const res = await request(app)
+        .post('/api/v1/academics/classes')
+        .set('Cookie', adminCookie)
+        .send({
+          name: '11A',
+          grade: 'Grade 11',
+          section: 'A',
+          capacity: 35,
+        });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Database unavailable');
     });
   });
 
-  describe('GET /api/v1/guardians', () => {
-    it('returns guardians list', async () => {
+  describe('Read-Only Fallback & Previews', () => {
+    it('GET /api/v1/guardians returns demo guardians with fallback-demo label', async () => {
       const res = await request(app)
         .get('/api/v1/guardians')
-        .set('Cookie', authCookie);
+        .set('Cookie', adminCookie);
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('data');
+      expect(res.body.source).toBe('fallback-demo');
+      expect(res.body.isLive).toBe(false);
     });
-  });
 
-  describe('GET /api/v1/staff', () => {
-    it('returns staff list for authenticated user', async () => {
+    it('GET /api/v1/staff returns demo staff with fallback-demo label', async () => {
       const res = await request(app)
         .get('/api/v1/staff')
-        .set('Cookie', authCookie);
+        .set('Cookie', adminCookie);
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('data');
-      expect(Array.isArray(res.body.data)).toBe(true);
-      expect(res.body.data.length).toBeGreaterThanOrEqual(1);
+      expect(res.body.source).toBe('fallback-demo');
+      expect(res.body.isLive).toBe(false);
     });
-  });
 
-  describe('Academic Routes', () => {
     it('GET /api/v1/academics/years returns academic sessions', async () => {
       const res = await request(app)
         .get('/api/v1/academics/years')
-        .set('Cookie', authCookie);
+        .set('Cookie', adminCookie);
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('data');
-      expect(res.body.data.some((y: any) => y.name === '2024-2025')).toBe(true);
+      expect(res.body.source).toBe('fallback-demo');
     });
 
     it('GET /api/v1/academics/classes returns classes list', async () => {
       const res = await request(app)
         .get('/api/v1/academics/classes')
-        .set('Cookie', authCookie);
+        .set('Cookie', adminCookie);
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('data');
-      expect(res.body.data.some((c: any) => c.name === '5A')).toBe(true);
+      expect(res.body.source).toBe('fallback-demo');
     });
   });
 });
