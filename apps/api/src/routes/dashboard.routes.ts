@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { authenticate } from '../middleware/auth.middleware';
+import { authenticate, requireRole } from '../middleware/auth.middleware';
 import { isDBConnected } from '../config/database';
 import { Student } from '../modules/students/student.model';
 import { Staff } from '../modules/staff/staff.model';
@@ -70,6 +70,7 @@ const DEFAULT_DEMO_SUMMARY = {
 router.get(
   '/summary',
   authenticate,
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer', 'Teacher'),
   asyncHandler(async (req: Request, res: Response) => {
     const schoolId = req.user?.schoolId || 'school-default';
 

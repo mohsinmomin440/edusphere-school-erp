@@ -48,6 +48,7 @@ const yearInputSchema = z
 
 router.get(
   '/years',
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer', 'Teacher'),
   asyncHandler(async (req: Request, res: Response) => {
     const schoolId = req.user?.schoolId || 'school-default';
     if (isDBConnected()) {
@@ -120,6 +121,7 @@ const classUpdateSchema = classInputSchema.partial();
 
 router.get(
   '/classes',
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer', 'Teacher'),
   asyncHandler(async (req: Request, res: Response) => {
     const schoolId = req.user?.schoolId || 'school-default';
     const grade = req.query.grade as string;
@@ -262,6 +264,7 @@ const subjectInputSchema = z.object({
 
 router.get(
   '/subjects',
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer', 'Teacher'),
   asyncHandler(async (req: Request, res: Response) => {
     const schoolId = req.user?.schoolId || 'school-default';
     const grade = req.query.grade as string;

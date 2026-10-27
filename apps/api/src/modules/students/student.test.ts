@@ -689,4 +689,165 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
       expect(res.status).toBe(404);
     });
   });
+
+  describe('Security: Staff Profile IDOR Prevention (SEC-7)', () => {
+    it('denies Student role from viewing staff profile (403)', async () => {
+      const studentCookie = createTestAuthCookie({
+        id: 'student-99',
+        email: 'student@edusphere.com',
+        name: 'Student User',
+        role: 'Student',
+        studentProfileId: 'demo-student-3',
+      });
+
+      const res = await request(app)
+        .get('/api/v1/staff/staff-1')
+        .set('Cookie', studentCookie);
+
+      expect(res.status).toBe(403);
+    });
+
+    it('denies Parent role from viewing staff profile (403)', async () => {
+      const parentCookie = createTestAuthCookie({
+        id: 'parent-99',
+        email: 'rahul.sharma@example.com',
+        name: 'Rahul Sharma',
+        role: 'Parent',
+        linkedStudentIds: ['demo-student-1'],
+      });
+
+      const res = await request(app)
+        .get('/api/v1/staff/staff-1')
+        .set('Cookie', parentCookie);
+
+      expect(res.status).toBe(403);
+    });
+
+    it('allows Teacher role to view staff profile (200)', async () => {
+      const teacherCookie = createTestAuthCookie({
+        id: 'teacher-101',
+        email: 'teacher@edusphere.com',
+        name: 'Teacher One',
+        role: 'Teacher',
+        assignedClasses: ['5A'],
+      });
+
+      const res = await request(app)
+        .get('/api/v1/staff/staff-1')
+        .set('Cookie', teacherCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toHaveProperty('name', 'Meenakshi Sundaram');
+    });
+  });
+
+  describe('Security: Academics Read RBAC (SEC-8)', () => {
+    it('denies Student role from accessing academic years (403)', async () => {
+      const studentCookie = createTestAuthCookie({
+        id: 'demo-student-3',
+        email: 'arjun@example.com',
+        name: 'Arjun Mehta',
+        role: 'Student',
+        studentProfileId: 'demo-student-3',
+      });
+
+      const res = await request(app)
+        .get('/api/v1/academics/years')
+        .set('Cookie', studentCookie);
+
+      expect(res.status).toBe(403);
+    });
+
+    it('denies Student role from accessing classes (403)', async () => {
+      const studentCookie = createTestAuthCookie({
+        id: 'demo-student-3',
+        email: 'arjun@example.com',
+        name: 'Arjun Mehta',
+        role: 'Student',
+        studentProfileId: 'demo-student-3',
+      });
+
+      const res = await request(app)
+        .get('/api/v1/academics/classes')
+        .set('Cookie', studentCookie);
+
+      expect(res.status).toBe(403);
+    });
+
+    it('denies Student role from accessing subjects (403)', async () => {
+      const studentCookie = createTestAuthCookie({
+        id: 'demo-student-3',
+        email: 'arjun@example.com',
+        name: 'Arjun Mehta',
+        role: 'Student',
+        studentProfileId: 'demo-student-3',
+      });
+
+      const res = await request(app)
+        .get('/api/v1/academics/subjects')
+        .set('Cookie', studentCookie);
+
+      expect(res.status).toBe(403);
+    });
+
+    it('allows Teacher role to access academic years (200)', async () => {
+      const teacherCookie = createTestAuthCookie({
+        id: 'teacher-101',
+        email: 'teacher@edusphere.com',
+        name: 'Teacher One',
+        role: 'Teacher',
+        assignedClasses: ['5A'],
+      });
+
+      const res = await request(app)
+        .get('/api/v1/academics/years')
+        .set('Cookie', teacherCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('data');
+    });
+  });
+
+  describe('Security: Dashboard RBAC (SEC-9)', () => {
+    it('denies Student role from accessing dashboard summary (403)', async () => {
+      const studentCookie = createTestAuthCookie({
+        id: 'demo-student-3',
+        email: 'arjun@example.com',
+        name: 'Arjun Mehta',
+        role: 'Student',
+        studentProfileId: 'demo-student-3',
+      });
+
+      const res = await request(app)
+        .get('/api/v1/dashboard/summary')
+        .set('Cookie', studentCookie);
+
+      expect(res.status).toBe(403);
+    });
+
+    it('denies Parent role from accessing dashboard summary (403)', async () => {
+      const parentCookie = createTestAuthCookie({
+        id: 'parent-99',
+        email: 'rahul.sharma@example.com',
+        name: 'Rahul Sharma',
+        role: 'Parent',
+        linkedStudentIds: ['demo-student-1'],
+      });
+
+      const res = await request(app)
+        .get('/api/v1/dashboard/summary')
+        .set('Cookie', parentCookie);
+
+      expect(res.status).toBe(403);
+    });
+
+    it('allows School Admin to access dashboard summary (200)', async () => {
+      const res = await request(app)
+        .get('/api/v1/dashboard/summary')
+        .set('Cookie', adminCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('stats');
+    });
+  });
 });

@@ -143,6 +143,7 @@ router.get(
 
 router.get(
   '/:id',
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Teacher'),
   asyncHandler(async (req: Request, res: Response) => {
     const schoolId = req.user?.schoolId || 'school-default';
     const { id } = req.params;
