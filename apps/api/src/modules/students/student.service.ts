@@ -177,8 +177,25 @@ export const getStudents = async (
       const targetId = user.studentProfileId || user.id;
       filter._id = targetId;
     } else if (user.role === 'Teacher') {
-      if (user.assignedClasses && user.assignedClasses.length > 0) {
+      // SEC-1: If teacher has no assigned classes, restrict to zero results
+      if (!user.assignedClasses || user.assignedClasses.length === 0) {
+        filter._id = null; // No results
+      } else {
         filter.class = { $in: user.assignedClasses };
+        // SEC-2: If teacher provides ?class=... filter, only allow if class is in their assignedClasses
+        if (classFilter && classFilter !== 'All') {
+          if (!user.assignedClasses.includes(classFilter)) {
+            filter._id = null; // Requested class not in assigned classes -> zero results
+            delete filter.class;
+          } else {
+            filter.class = classFilter; // Narrow to the specific requested class
+          }
+        }
+      }
+    } else {
+      // Non-teacher roles: apply class filter normally
+      if (classFilter && classFilter !== 'All') {
+        filter.class = classFilter;
       }
     }
 
@@ -186,10 +203,6 @@ export const getStudents = async (
       filter.status = status;
     } else if (!status) {
       filter.status = { $ne: 'Archived' };
-    }
-
-    if (classFilter && classFilter !== 'All') {
-      filter.class = classFilter;
     }
 
     if (search && search.trim()) {
@@ -250,8 +263,19 @@ export const getStudents = async (
     const targetId = user.studentProfileId || user.id;
     filtered = filtered.filter((s) => s._id === targetId);
   } else if (user.role === 'Teacher') {
-    if (user.assignedClasses && user.assignedClasses.length > 0) {
+    // SEC-1: If teacher has no assigned classes, restrict to zero results
+    if (!user.assignedClasses || user.assignedClasses.length === 0) {
+      filtered = []; // No results
+    } else {
       filtered = filtered.filter((s) => user.assignedClasses!.includes(s.class));
+      // SEC-2: If teacher provides ?class=... filter, only allow if class is in their assignedClasses
+      if (classFilter && classFilter !== 'All') {
+        if (!user.assignedClasses!.includes(classFilter)) {
+          filtered = []; // Requested class not in assigned classes -> zero results
+        } else {
+          filtered = filtered.filter((s) => s.class === classFilter); // Narrow to the specific requested class
+        }
+      }
     }
   }
 
@@ -261,7 +285,8 @@ export const getStudents = async (
     filtered = filtered.filter((s) => s.status !== 'Archived');
   }
 
-  if (classFilter && classFilter !== 'All') {
+  // Non-teacher roles: apply class filter normally
+  if (user.role !== 'Teacher' && classFilter && classFilter !== 'All') {
     filtered = filtered.filter((s) => s.class === classFilter);
   }
 
@@ -333,10 +358,12 @@ export const getStudentById = async (id: string, user: AuthUser) => {
 
   // Check teacher class assignment
   if (user.role === 'Teacher') {
-    if (user.assignedClasses && user.assignedClasses.length > 0) {
-      if (!user.assignedClasses.includes(student.class)) {
-        throw new ForbiddenError('Forbidden: You can only view students in your assigned classes.');
-      }
+    // SEC-1: If teacher has no assigned classes, deny access
+    if (!user.assignedClasses || user.assignedClasses.length === 0) {
+      throw new ForbiddenError('Forbidden: You have no assigned classes and cannot view student records.');
+    }
+    if (!user.assignedClasses.includes(student.class)) {
+      throw new ForbiddenError('Forbidden: You can only view students in your assigned classes.');
     }
   }
 

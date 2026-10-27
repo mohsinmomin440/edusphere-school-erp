@@ -58,8 +58,10 @@ router.get(
         isLive: true,
       });
     }
+    // Disconnected mode: filter demo years by schoolId
+    const filtered = DEMO_YEARS.filter((y) => y.schoolId === schoolId);
     return res.json({
-      data: DEMO_YEARS,
+      data: filtered,
       source: 'fallback-demo',
       isLive: false,
     });
@@ -275,7 +277,8 @@ router.get(
       });
     }
 
-    let filtered = DEMO_SUBJECTS;
+    // Disconnected mode: filter demo subjects by schoolId
+    let filtered = DEMO_SUBJECTS.filter((s) => s.schoolId === schoolId);
     if (grade && grade !== 'All') filtered = filtered.filter((s) => s.grade === grade);
 
     return res.json({
@@ -326,6 +329,7 @@ const enrollmentInputSchema = z.object({
 
 router.get(
   '/enrollments',
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer', 'Teacher'),
   asyncHandler(async (req: Request, res: Response) => {
     const schoolId = req.user?.schoolId || 'school-default';
     const studentId = req.query.studentId as string;

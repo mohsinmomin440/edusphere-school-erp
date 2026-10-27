@@ -24,6 +24,7 @@ const guardianUpdateSchema = guardianInputSchema.partial();
 
 router.get(
   '/',
+  requireRole('Super Admin', 'Super Administrator', 'School Admin', 'Principal', 'Admission Officer', 'Parent', 'Teacher'),
   asyncHandler(async (req: Request, res: Response) => {
     const user = req.user!;
     const schoolId = user.schoolId || 'school-default';
@@ -33,6 +34,20 @@ router.get(
 
     if (isDBConnected()) {
       const filter: Record<string, any> = { schoolId };
+
+      // SEC-3: If user is Parent, only show their own guardian record
+      if (user.role === 'Parent') {
+        if (user.email) {
+          filter.email = user.email.toLowerCase();
+        } else {
+          // No email -> no results
+          filter._id = null;
+        }
+      }
+      // SEC-3: Student role should be rejected (handled by requireRole above, but defense in depth)
+      if (user.role === 'Student') {
+        return res.status(403).json({ error: 'Forbidden: Students cannot access guardian directory.' });
+      }
 
       if (status && status !== 'All') {
         filter.status = status;
@@ -47,11 +62,6 @@ router.get(
       if (search && search.trim()) {
         const regex = new RegExp(search.trim(), 'i');
         filter.$or = [{ name: regex }, { phone: regex }, { email: regex }, { occupation: regex }];
-      }
-
-      // If user is a Parent, only show their own guardian record
-      if (user.role === 'Parent' && user.email) {
-        filter.email = user.email.toLowerCase();
       }
 
       const guardians = await Guardian.find(filter).sort({ name: 1 }).lean();
@@ -140,6 +150,14 @@ router.get(
 
     let demoGuardians = Array.from(guardianMap.values());
 
+    // SEC-3: In disconnected mode, if Parent, filter to only their email
+    if (user.role === 'Parent' && user.email) {
+      demoGuardians = demoGuardians.filter((g) => g.email.toLowerCase() === user.email!.toLowerCase());
+    } else if (user.role === 'Parent') {
+      demoGuardians = [];
+    }
+    // SEC-3: Student role already blocked by requireRole
+
     if (relationship && relationship !== 'All') {
       demoGuardians = demoGuardians.filter((g) => g.relationship === relationship);
     }
@@ -169,7 +187,8 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req: Request, res: Response) => {
-    const schoolId = req.user?.schoolId || 'school-default';
+    const user = req.user!;
+    const schoolId = user.schoolId || 'school-default';
     const { id } = req.params;
 
     if (isDBConnected()) {
@@ -177,6 +196,14 @@ router.get(
       if (!guardian) {
         return res.status(404).json({ error: 'Guardian not found' });
       }
+
+      // SEC-4: BOLA prevention - If Parent, verify email matches
+      if (user.role === 'Parent') {
+        if (!user.email || guardian.email.toLowerCase() !== user.email.toLowerCase()) {
+          return res.status(403).json({ error: 'Forbidden: You can only view your own guardian record.' });
+        }
+      }
+
       const wards = await Student.find({
         schoolId,
         $or: [{ 'guardian.id': guardian._id }, { 'guardian.phone': guardian.phone }],
@@ -191,28 +218,76 @@ router.get(
       });
     }
 
-    // Disconnected mode read
+    // Disconnected mode read - SEC-4: Don't return static data, lookup by ID
+    // Build guardian map from ALL demo students (not filtered by user role) so we can
+    // distinguish "not found" (404) from "forbidden" (403) for BOLA prevention.
+    const allStudentsResult = await studentService.getStudents(
+      { ...user, role: 'School Admin' } as any,
+      {
+        page: 1,
+        limit: 100,
+        sortBy: 'createdAt',
+        sortOrder: 'desc',
+      }
+    );
+
+    // Build guardian map from all demo students
+    const guardianMap = new Map<string, any>();
+    allStudentsResult.data.forEach((s: any) => {
+      const gName = s.guardian?.name || 'Guardian';
+      const gPhone = s.guardian?.phone || '';
+      const key = `${gName}-${gPhone}`;
+
+      if (!guardianMap.has(key)) {
+        guardianMap.set(key, {
+          _id: `g-${s._id}`,
+          schoolId,
+          name: gName,
+          phone: gPhone,
+          email: s.guardian?.email || '',
+          relationship: s.guardian?.relationship || 'Parent',
+          occupation: s.guardian?.occupation || 'Professional',
+          address: s.address || '',
+          status: 'Active',
+          wards: [
+            {
+              _id: s._id,
+              name: s.name,
+              class: s.class,
+              rollNo: s.rollNo,
+              admissionNo: s.admissionNo,
+            },
+          ],
+        });
+      } else {
+        const existing = guardianMap.get(key);
+        existing.wards.push({
+          _id: s._id,
+          name: s.name,
+          class: s.class,
+          rollNo: s.rollNo,
+          admissionNo: s.admissionNo,
+        });
+      }
+    });
+
+    const demoGuardians = Array.from(guardianMap.values());
+
+    // Find matching guardian by ID
+    const demoGuardian = demoGuardians.find((g) => g._id === id);
+    if (!demoGuardian) {
+      return res.status(404).json({ error: 'Guardian not found' });
+    }
+
+    // SEC-4: BOLA prevention - If Parent, verify email matches
+    if (user.role === 'Parent') {
+      if (!user.email || demoGuardian.email.toLowerCase() !== user.email.toLowerCase()) {
+        return res.status(403).json({ error: 'Forbidden: You can only view your own guardian record.' });
+      }
+    }
+
     return res.json({
-      data: {
-        _id: id,
-        schoolId,
-        name: 'Rahul Sharma',
-        phone: '+91 98765 43210',
-        email: 'rahul.sharma@example.com',
-        relationship: 'Father',
-        occupation: 'Software Architect',
-        address: '124 Green Avenue, New Delhi',
-        status: 'Active',
-        wards: [
-          {
-            _id: 'demo-student-1',
-            name: 'Aarav Sharma',
-            class: '5A',
-            rollNo: '101',
-            admissionNo: 'ADM-2025-0101',
-          },
-        ],
-      },
+      data: demoGuardian,
       source: 'fallback-demo',
       isLive: false,
     });

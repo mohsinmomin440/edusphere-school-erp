@@ -16,6 +16,16 @@ export const errorHandler = (
     return res.status(400).json({ error: errorDetails });
   }
 
+  // SEC-6: Handle Mongoose CastError (invalid ObjectId format)
+  if (err.name === 'CastError') {
+    return res.status(400).json({ error: 'Invalid resource identifier format' });
+  }
+
+  // SEC-6: Handle MongoDB duplicate key error (code 11000)
+  if (err.code === 11000) {
+    return res.status(409).json({ error: 'A record with this identifier already exists in this school.' });
+  }
+
   console.error(err);
   return res.status(500).json({ error: err.message || 'Internal Server Error' });
 };
