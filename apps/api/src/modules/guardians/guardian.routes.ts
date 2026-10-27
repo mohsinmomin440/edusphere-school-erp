@@ -20,7 +20,15 @@ const guardianInputSchema = z.object({
   status: z.enum(['Active', 'Archived']).default('Active'),
 });
 
-const guardianUpdateSchema = guardianInputSchema.partial();
+const guardianUpdateSchema = z.object({
+  name: z.string().min(1, 'Guardian name is required').optional(),
+  relationship: z.string().optional(),
+  phone: z.string().min(1, 'Phone number is required').optional(),
+  email: z.string().email('Invalid email address').or(z.literal('')).optional(),
+  occupation: z.string().optional(),
+  address: z.string().optional(),
+  status: z.enum(['Active', 'Archived']).optional(),
+});
 
 router.get(
   '/',

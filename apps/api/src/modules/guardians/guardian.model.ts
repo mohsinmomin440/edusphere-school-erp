@@ -19,7 +19,7 @@ const GuardianSchema = new Schema<IGuardian>(
     name: { type: String, required: true, trim: true },
     relationship: { type: String, required: true, default: 'Guardian' },
     phone: { type: String, required: true, trim: true },
-    email: { type: String, required: true, trim: true, lowercase: true },
+    email: { type: String, trim: true, lowercase: true, default: '' },
     occupation: { type: String, default: '' },
     address: { type: String, default: '' },
     status: {
