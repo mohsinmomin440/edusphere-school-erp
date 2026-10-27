@@ -941,22 +941,6 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
       expect(res.body.data).toHaveProperty('name', 'Rahul Sharma');
     });
 
-    it('denies Teacher from accessing guardian directory (403)', async () => {
-      const teacherCookie = createTestAuthCookie({
-        id: 'teacher-101',
-        email: 'teacher@edusphere.com',
-        name: 'Teacher One',
-        role: 'Teacher',
-        assignedClasses: ['5A'],
-      });
-
-      const res = await request(app)
-        .get('/api/v1/guardians')
-        .set('Cookie', teacherCookie);
-
-      expect(res.status).toBe(403);
-    });
-
     it('prevents Parent from bypassing email filter via search query (403/empty)', async () => {
       const parentCookie = createTestAuthCookie({
         id: 'parent-search',
@@ -972,6 +956,120 @@ describe('Students, RBAC & Multi-Tenancy API Module', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.data.length).toBe(0);
+    });
+
+    it('prevents Parent from bypassing email filter via status query', async () => {
+      const parentCookie = createTestAuthCookie({
+        id: 'parent-status',
+        email: 'rahul.sharma@example.com',
+        name: 'Rahul Sharma',
+        role: 'Parent',
+      });
+
+      // status=Active should still only return the parent's own record
+      const res = await request(app)
+        .get('/api/v1/guardians?status=Active')
+        .set('Cookie', parentCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBe(1);
+      expect(res.body.data[0].email).toBe('rahul.sharma@example.com');
+    });
+
+    it('prevents Parent from bypassing email filter via relationship query', async () => {
+      const parentCookie = createTestAuthCookie({
+        id: 'parent-relationship',
+        email: 'rahul.sharma@example.com',
+        name: 'Rahul Sharma',
+        role: 'Parent',
+      });
+
+      // relationship=Father should still only return the parent's own record
+      const res = await request(app)
+        .get('/api/v1/guardians?relationship=Father')
+        .set('Cookie', parentCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBe(1);
+      expect(res.body.data[0].email).toBe('rahul.sharma@example.com');
+    });
+
+    it('prevents Parent from bypassing email filter via search for another guardian name', async () => {
+      const parentCookie = createTestAuthCookie({
+        id: 'parent-name-search',
+        email: 'rahul.sharma@example.com',
+        name: 'Rahul Sharma',
+        role: 'Parent',
+      });
+
+      // Search for "Anil" (another guardian's name) — must return 0 results
+      const res = await request(app)
+        .get('/api/v1/guardians?search=Anil')
+        .set('Cookie', parentCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBe(0);
+    });
+
+    it('allows Parent to find their own record via search by name', async () => {
+      const parentCookie = createTestAuthCookie({
+        id: 'parent-name-search-own',
+        email: 'rahul.sharma@example.com',
+        name: 'Rahul Sharma',
+        role: 'Parent',
+      });
+
+      // Search for "Rahul" (the parent's own name) — should return their own record
+      const res = await request(app)
+        .get('/api/v1/guardians?search=Rahul')
+        .set('Cookie', parentCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBe(1);
+      expect(res.body.data[0].email).toBe('rahul.sharma@example.com');
+    });
+
+    it('allows School Admin to see full guardian directory', async () => {
+      const res = await request(app)
+        .get('/api/v1/guardians')
+        .set('Cookie', adminCookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBeGreaterThanOrEqual(5);
+    });
+
+    it('returns 403 when Student attempts to access GET /guardians (SEC-3)', async () => {
+      const studentCookie = createTestAuthCookie({
+        id: 'demo-student-3',
+        email: 'arjun@example.com',
+        name: 'Arjun Mehta',
+        role: 'Student',
+        studentProfileId: 'demo-student-3',
+      });
+
+      const res = await request(app)
+        .get('/api/v1/guardians')
+        .set('Cookie', studentCookie);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Forbidden');
+    });
+
+    it('returns 403 when Teacher attempts to access GET /guardians (SEC-3)', async () => {
+      const teacherCookie = createTestAuthCookie({
+        id: 'teacher-101',
+        email: 'teacher@edusphere.com',
+        name: 'Teacher One',
+        role: 'Teacher',
+        assignedClasses: ['5A'],
+      });
+
+      const res = await request(app)
+        .get('/api/v1/guardians')
+        .set('Cookie', teacherCookie);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Forbidden');
     });
   });
 
